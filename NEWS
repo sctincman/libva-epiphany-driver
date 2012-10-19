@@ -1,0 +1,5 @@
+libva-epiphany-driver NEWS -- summary of changes.
+Copyright (C) 2012 Scott Tincman <sctincman@gmail.com>
+
+Version 0.0.1 - 19.Oct.2012
+Initial Skeleton created from dummy_drv_video

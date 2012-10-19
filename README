@@ -1,0 +1,32 @@
+
+  libva-epiphany-driver
+  VA driver for the Adapteva Epiphany coprocessor
+
+  Copyright (C) 2012 Scott Tincman
+
+
+License
+-------
+
+Please read the COPYING file available in this package.
+
+
+Overview
+--------
+
+libva-epiphany-driver is the VA-API implementation for Adapteva Epiphany coprocessors.
+
+This is a "dummy" driver or the Epiphany coprocessor, using the dummy_drv_video in the libva trunk.
+The hope is I can get this to a resonable point using the exisiting documentation to reduce the
+amount of work needed once the dev boards are available.
+
+Codecs
+------
+
+None so far!
+
+
+Requirements
+------------
+
+libva >= 1.0.16
