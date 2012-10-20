@@ -88,6 +88,7 @@ VAStatus epiphany_QueryConfigProfiles(
     profile_list[i++] = VAProfileVC1Simple;
     profile_list[i++] = VAProfileVC1Main;
     profile_list[i++] = VAProfileVC1Advanced;
+    profile_list[i++] = VAProfileJPEGBaseline;
 
     /* If the assert fails then EPIPHANY_MAX_PROFILES needs to be bigger */
     ASSERT(i <= EPIPHANY_MAX_PROFILES);
@@ -128,6 +129,11 @@ VAStatus epiphany_QueryConfigEntrypoints(
         case VAProfileVC1Simple:
         case VAProfileVC1Main:
         case VAProfileVC1Advanced:
+                *num_entrypoints = 1;
+                entrypoint_list[0] = VAEntrypointVLD;
+                break;
+
+        case VAProfileJPEGBaseline:
                 *num_entrypoints = 1;
                 entrypoint_list[0] = VAEntrypointVLD;
                 break;
@@ -255,6 +261,17 @@ VAStatus epiphany_CreateConfig(
         case VAProfileVC1Simple:
         case VAProfileVC1Main:
         case VAProfileVC1Advanced:
+                if (VAEntrypointVLD == entrypoint)
+                {
+                    vaStatus = VA_STATUS_SUCCESS;
+                }
+                else
+                {
+                    vaStatus = VA_STATUS_ERROR_UNSUPPORTED_ENTRYPOINT;
+                }
+                break;
+
+        case VAProfileJPEGBaseline:
                 if (VAEntrypointVLD == entrypoint)
                 {
                     vaStatus = VA_STATUS_SUCCESS;
@@ -766,6 +783,9 @@ VAStatus epiphany_CreateBuffer(
         case VAResidualDataBufferType:
         case VADeblockingParameterBufferType:
         case VAImageBufferType:
+        case VAProtectedSliceDataBufferType:
+        case VAQMatrixBufferType:
+        case VAHuffmanTableBufferType:
             /* Ok */
             break;
         default:

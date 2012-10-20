@@ -29,7 +29,7 @@
 #include <va/va.h>
 #include "object_heap.h"
 
-#define EPIPHANY_MAX_PROFILES			11
+#define EPIPHANY_MAX_PROFILES			12
 #define EPIPHANY_MAX_ENTRYPOINTS		5
 #define EPIPHANY_MAX_CONFIG_ATTRIBUTES		10
 #define EPIPHANY_MAX_IMAGE_FORMATS		10
