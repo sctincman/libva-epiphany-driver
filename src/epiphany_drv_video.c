@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include <va/va_backend.h>
+#include "sysdeps.h"
 
 #include "epiphany_drv_video.h"
 
@@ -1150,6 +1151,8 @@ VAStatus epiphany_Terminate( VADriverContextP ctx )
 
     return VA_STATUS_SUCCESS;
 }
+
+VAStatus DLL_EXPORT VA_DRIVER_INIT_FUNC(VADriverContextP ctx);
 
 VAStatus VA_DRIVER_INIT_FUNC(  VADriverContextP ctx )
 {

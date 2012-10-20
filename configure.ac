@@ -10,8 +10,30 @@ m4_append([epiphany_driver_version], epiphany_driver_pre_version, [.pre])
 ])
 
 # libva minimum version requirement
-m4_define([libva_package_version], [1.0.14])
-m4_define([va_api_version], [0.32.0])
+m4_define([va_api_major_version], [0])
+m4_define([va_api_minor_version], [33])
+m4_define([va_api_micro_version], [0])
+
+m4_define([va_api_version],
+          [va_api_major_version.va_api_minor_version.va_api_micro_version])m4_define([va_api_major_version], [0])
+
+# libva package version number, (as distinct from shared library version)
+# XXX: we want the package version to remain at 1.0.x for VA-API 0.32.y
+#
+# - major version is automatically generated from VA-API major version
+# - minor version is automatically generated from VA-API minor version
+# - increment micro for any library release
+# - reset micro version to zero when VA-API major or minor version is changed
+m4_define([libva_major_version], [m4_eval(va_api_major_version + 1)])
+m4_define([libva_minor_version], [m4_eval(va_api_minor_version - 32)])
+m4_define([libva_micro_version], [1])
+m4_define([libva_pre_version],   [1])
+
+m4_define([libva_version],
+          [libva_major_version.libva_minor_version.libva_micro_version])
+m4_if(libva_pre_version, [0], [], [
+m4_append([libva_version], libva_pre_version, [.pre])
+])
 
 AC_PREREQ([2.57])
 AC_INIT([epiphany_driver], [epiphany_driver_version], [sctincman@gmail.com],
@@ -47,8 +69,8 @@ AC_C_BIGENDIAN
 AC_HEADER_STDC
 AC_SYS_LARGEFILE
 
-LIBVA_PACKAGE_VERSION=libva_package_version
-AC_SUBST(LIBVA_PACKAGE_VERSION)
+LIBVA_VERSION=libva_version
+AC_SUBST(LIBVA_VERSION)
 
 dnl Check for VA-API
 PKG_CHECK_MODULES(LIBVA_DEPS,     [libva >= va_api_version])
