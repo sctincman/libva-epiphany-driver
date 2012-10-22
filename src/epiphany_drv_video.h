@@ -37,11 +37,66 @@
 #define EPIPHANY_MAX_DISPLAY_ATTRIBUTES		4
 #define EPIPHANY_STR_VENDOR			"Epiphany Driver 0.1"
 
+//this was in the matmul_host example, need to reference docs why this offset is needed
+unsigned int DRAM_BASE = 0x81000000;
+
 struct epiphany_driver_data {
     struct object_heap	config_heap;
     struct object_heap	context_heap;
     struct object_heap	surface_heap;
     struct object_heap	buffer_heap;
+
+    /*
+      The necessary data to communicate with the coprocessor
+     */
+    char *servIP; // IP address, usually 127.0.0.1 for the local e-server
+    unsigned short loaderPort; //The port to communicate with eserver
+    
+};
+
+struct buffer_store
+{
+    void *buffer;
+    void *bo; //update as needed for epiphany
+    int ref_count;
+    int num_elements;
+};
+
+struct decode_state
+{
+    struct buffer_store *pic_param;
+    struct buffer_store **slice_params;
+    struct buffer_store *iq_matrix;
+    struct buffer_store *bit_plane;
+    struct buffer_store *huffman_table;
+    struct buffer_store **slice_datas;
+    VASurfaceID current_render_target;
+    int max_slice_params;
+    int max_slice_datas;
+    int num_slice_params;
+    int num_slice_datas;
+};
+
+struct encode_state
+{
+    struct buffer_store *seq_param;
+    struct buffer_store *pic_param;
+    struct buffer_store *pic_control;
+    struct buffer_store *iq_matrix;
+    struct buffer_store *q_matrix;
+    struct buffer_store **slice_params;
+    VASurfaceID current_render_target;
+    int max_slice_params;
+    int num_slice_params;
+};
+
+#define CODEC_DEC       0
+#define CODEC_ENC       1
+
+union codec_state
+{
+    struct decode_state decode;
+    struct encode_state encode;
 };
 
 struct object_config {
@@ -61,19 +116,42 @@ struct object_context {
     int picture_height;
     int num_render_targets;
     int flags;
+    union codec_state codec_state;
     VASurfaceID *render_targets;
 };
 
 struct object_surface {
     struct object_base base;
     VASurfaceID surface_id;
+    VASurfaceStatus status;
+    VASubpictureID subpic;
+    int width;
+    int height;
+    int size;
+    int orig_width;
+    int orig_height;
+    int flags;
+    unsigned int fourcc;    
+    dri_bo *bo;
+    VAImageID locked_image_id;
+    void (*free_private_data)(void **data);
+    void *private_data;
+    unsigned int subsampling;
+    int x_cb_offset;
+    int y_cb_offset;
+    int x_cr_offset;
+    int y_cr_offset;
+    int cb_cr_width;
+    int cb_cr_height;
+    int cb_cr_pitch;
 };
 
 struct object_buffer {
     struct object_base base;
-    void *buffer_data;
+    struct buffer_store *buffer_store;
     int max_num_elements;
     int num_elements;
+    unsigned int element_size;
 };
 
 typedef struct object_config *object_config_p;
