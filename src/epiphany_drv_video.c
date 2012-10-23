@@ -78,17 +78,6 @@ static void epiphany__information_message(const char *msg, ...)
  * Just simple reference counting management
  */
 
-void reference_buffer_store(struct buffer_store **ptr, 
-                            struct buffer_store *buffer_store)
-{
-    assert(*ptr == NULL);
-
-    if (buffer_store) {
-        buffer_store->ref_count++;
-        *ptr = buffer_store;
-    }
-}
-
 void release_buffer_store(struct buffer_store **ptr)
 {
     struct buffer_store *buffer_store = *ptr;
@@ -113,6 +102,20 @@ void release_buffer_store(struct buffer_store **ptr)
     }
 
     *ptr = NULL;
+}
+
+void reference_buffer_store(struct buffer_store **ptr, 
+                            struct buffer_store *buffer_store)
+{
+    //assert(*ptr == NULL);
+    // I saw this too many times, if ptr is already a buffer_store, release first
+    if (*ptr)
+	release_buffer_store(ptr);
+
+    if (buffer_store) {
+        buffer_store->ref_count++;
+        *ptr = buffer_store;
+    }
 }
 
 VAStatus epiphany_QueryConfigProfiles(
@@ -452,6 +455,22 @@ VAStatus epiphany_CreateSurfaces(
         }
         obj_surface->surface_id = surfaceID;
         surfaces[i] = surfaceID;
+
+	/* From the intel-driver, may be necessary */
+
+        obj_surface->status = VASurfaceReady;
+        obj_surface->subpic = VA_INVALID_ID;
+        obj_surface->orig_width = width;
+        obj_surface->orig_height = height;
+	/* The intel driver padded for some reason, I can likely get rid of "orig_"*/
+	obj_surface->width = width;
+	obj_surface->height = height;
+
+        obj_surface->flags = 0;
+        obj_surface->fourcc = 0;
+        obj_surface->bo = NULL;
+        obj_surface->locked_image_id = VA_INVALID_ID;
+        obj_surface->subsampling = 0;
     }
 
     /* Error recovery */
@@ -752,8 +771,6 @@ VAStatus epiphany_CreateContext(
             obj_context->codec_state.encode.max_slice_params = NUM_SLICES;
             obj_context->codec_state.encode.slice_params = calloc(obj_context->codec_state.encode.max_slice_params,
                                                                sizeof(*obj_context->codec_state.encode.slice_params));
-            assert(i965->codec_info->enc_hw_context_init);
-            obj_context->hw_context = i965->codec_info->enc_hw_context_init(ctx, obj_config->profile);
         }
 	else
 	{
@@ -761,11 +778,11 @@ VAStatus epiphany_CreateContext(
             memset(&obj_context->codec_state.decode, 0, sizeof(obj_context->codec_state.decode));
             obj_context->codec_state.decode.current_render_target = -1;
             obj_context->codec_state.decode.max_slice_params = NUM_SLICES;
-            obj_context->codec_state.decode.max_slice_datas = NUM_SLICES;
+            obj_context->codec_state.decode.max_slice_data = NUM_SLICES;
             obj_context->codec_state.decode.slice_params = calloc(obj_context->codec_state.decode.max_slice_params,
                                                                sizeof(*obj_context->codec_state.decode.slice_params));
-            obj_context->codec_state.decode.slice_datas = calloc(obj_context->codec_state.decode.max_slice_datas,
-                                                              sizeof(*obj_context->codec_state.decode.slice_datas));
+            obj_context->codec_state.decode.slice_data = calloc(obj_context->codec_state.decode.max_slice_data,
+                                                              sizeof(*obj_context->codec_state.decode.slice_data));
         }
     }
 
@@ -786,13 +803,10 @@ VAStatus epiphany_CreateContext(
     return vaStatus;
 }
 
-
-VAStatus epiphany_DestroyContext(VADriverContextP ctx,
-				 VAContextID context)
+VAStatus epiphany_destroy_context(struct object_heap *heap, struct object_base *obj)
 {
-    INIT_DRIVER_DATA
-    object_context_p obj_context = CONTEXT(context);
-    ASSERT(obj_context);
+    struct object_context *obj_context = (struct object_context *)obj;
+    int i;
 
     obj_context->context_id = -1;
     obj_context->config_id = -1;
@@ -827,7 +841,7 @@ VAStatus epiphany_DestroyContext(VADriverContextP ctx,
     else
     {
         assert(obj_context->codec_state.decode.num_slice_params <= obj_context->codec_state.decode.max_slice_params);
-        assert(obj_context->codec_state.decode.num_slice_datas <= obj_context->codec_state.decode.max_slice_datas);
+        assert(obj_context->codec_state.decode.num_slice_data <= obj_context->codec_state.decode.max_slice_data);
 
         release_buffer_store(&obj_context->codec_state.decode.pic_param);
         release_buffer_store(&obj_context->codec_state.decode.iq_matrix);
@@ -839,16 +853,25 @@ VAStatus epiphany_DestroyContext(VADriverContextP ctx,
         for (i = 0; i < obj_context->codec_state.decode.num_slice_params; i++)
             release_buffer_store(&obj_context->codec_state.decode.slice_params[i]);
 
-        for (i = 0; i < obj_context->codec_state.decode.num_slice_datas; i++)
-            release_buffer_store(&obj_context->codec_state.decode.slice_datas[i]);
+        for (i = 0; i < obj_context->codec_state.decode.num_slice_data; i++)
+            release_buffer_store(&obj_context->codec_state.decode.slice_data[i]);
 
         free(obj_context->codec_state.decode.slice_params);
-        free(obj_context->codec_state.decode.slice_datas);
+        free(obj_context->codec_state.decode.slice_data);
     }
 
-    object_heap_free( &driver_data->context_heap, (object_base_p) obj_context);
+    object_heap_free(heap, (object_base_p) obj_context);
 
     return VA_STATUS_SUCCESS;
+}
+
+VAStatus epiphany_DestroyContext(VADriverContextP ctx,
+				 VAContextID context)
+{
+    INIT_DRIVER_DATA
+    object_context_p obj_context = CONTEXT(context);
+    ASSERT(obj_context);
+    return epiphany_destroy_context(&driver_data->context_heap, (struct object_base *)obj_context);
 }
 
 VAStatus epiphany_CreateBuffer(
@@ -911,6 +934,7 @@ VAStatus epiphany_CreateBuffer(
     {
 	obj_buffer->buffer_store->buffer = calloc(num_elements, size);
 	obj_buffer->buffer_store->ref_count = 1;
+	obj_buffer->buffer_store->bo = NULL;
 	/* this is in the parent object_buffer... needed? and if needed, why no size_t? */
 	obj_buffer->buffer_store->num_elements = num_elements;
 
@@ -926,6 +950,7 @@ VAStatus epiphany_CreateBuffer(
         obj_buffer->max_num_elements = num_elements;
         obj_buffer->num_elements = num_elements;
 	obj_buffer->element_size = size;
+	obj_buffer->type = type;
 
         *buf_id = bufferID;
     }
@@ -1027,7 +1052,7 @@ VAStatus epiphany_BeginPicture(
     object_surface_p obj_surface;
 
     /* Intel checks profile here, but do we need to hold people's hands?
-     * If so, make a proc to do so
+     * If so, make a proc to do so... since they do it multiple times.
      */
 
     obj_context = CONTEXT(context);
@@ -1056,32 +1081,119 @@ VAStatus epiphany_RenderPicture(
     VAStatus vaStatus = VA_STATUS_SUCCESS;
     object_context_p obj_context;
     object_surface_p obj_surface;
+    object_config_p obj_config;
+    object_buffer_p obj_buffer;
     int i;
 
     obj_context = CONTEXT(context);
     ASSERT(obj_context);
 
+    VAConfigID config = obj_context->config_id;
+    obj_config = CONFIG(config);
+    assert(obj_config);
+
     obj_surface = SURFACE(obj_context->current_render_target);
     ASSERT(obj_surface);
 
-    /* verify that we got valid buffer references */
+    /*
+    if (obj_context->codec_type == CODEC_ENC)
+    {
+	struct encode_state *codec_state = &obj_context->codec_state.encode;
+    }
+    else
+    {
+	struct decode_state *codec_state = &obj_context->codec_state.decode;
+    }
+    */
+
+    union codec_state *codec_state = &obj_context->codec_state;
+
     for(i = 0; i < num_buffers; i++)
     {
-        object_buffer_p obj_buffer = BUFFER(buffers[i]);
-        ASSERT(obj_buffer);
+        obj_buffer = BUFFER(buffers[i]);
+        assert(obj_buffer);
+	assert(obj_buffer->buffer_store);
+	assert(obj_buffer->buffer_store->buffer);
         if (NULL == obj_buffer)
         {
             vaStatus = VA_STATUS_ERROR_INVALID_BUFFER;
             break;
         }
-    }
-    
-    /* Release buffers (after storing on server... in this case copy to epiphany? */
-    for(i = 0; i < num_buffers; i++)
-    {
-        object_buffer_p obj_buffer = BUFFER(buffers[i]);
-        ASSERT(obj_buffer);
-        epiphany__destroy_buffer(driver_data, obj_buffer);
+
+	switch(obj_buffer->type)
+	{
+	case VAEncSequenceParameterBufferType:
+	    reference_buffer_store(&codec_state->encode.seq_param, obj_buffer->buffer_store);
+	    vaStatus = VA_STATUS_SUCCESS;
+	    break;
+	    
+        case VAEncPictureParameterBufferType:
+	    reference_buffer_store(&codec_state->encode.pic_param, obj_buffer->buffer_store);
+	    vaStatus = VA_STATUS_SUCCESS;
+	    break;
+
+        case VAPictureParameterBufferType:
+	    /* Ugh, this means different things for enc/decode... */
+	    if (obj_context->codec_type == CODEC_ENC)
+		reference_buffer_store(&codec_state->encode.pic_control, obj_buffer->buffer_store);
+	    else
+		reference_buffer_store(&codec_state->decode.pic_param, obj_buffer->buffer_store);
+	    vaStatus = VA_STATUS_SUCCESS;
+            break;		
+	    
+        case VAEncSliceParameterBufferType:
+        case VASliceParameterBufferType:
+	    if (codec_state->encode.num_slice_params == codec_state->encode.max_slice_params)
+	    {
+		codec_state->encode.slice_params = realloc(codec_state->encode.slice_params, (codec_state->encode.max_slice_params + NUM_SLICES) * sizeof(*codec_state->encode.slice_params));
+		memset(codec_state->encode.slice_params + codec_state->encode.max_slice_params, 0, NUM_SLICES * sizeof(*codec_state->encode.slice_params));
+		codec_state->encode.max_slice_params += NUM_SLICES;
+	    }
+	    reference_buffer_store(&codec_state->encode.slice_params[codec_state->encode.num_slice_params], obj_buffer->buffer_store);
+	    codec_state->encode.num_slice_params++;
+	    vaStatus = VA_STATUS_SUCCESS;
+            break;
+	    
+        case VAQMatrixBufferType:
+            reference_buffer_store(&codec_state->encode.q_matrix, obj_buffer->buffer_store);
+	    vaStatus = VA_STATUS_SUCCESS;
+            break;
+	    
+        case VAIQMatrixBufferType:
+	    reference_buffer_store(&codec_state->encode.iq_matrix, obj_buffer->buffer_store);
+	    vaStatus = VA_STATUS_SUCCESS;
+            break;
+
+        case VABitPlaneBufferType:
+	    reference_buffer_store(&codec_state->decode.bit_plane, obj_buffer->buffer_store);
+	    vaStatus = VA_STATUS_SUCCESS;
+            break;
+
+        case VASliceDataBufferType:
+	    if (codec_state->decode.num_slice_data == codec_state->decode.max_slice_data)
+	    {
+		codec_state->decode.slice_data = realloc(codec_state->decode.slice_data, (codec_state->decode.max_slice_data + NUM_SLICES) * sizeof(*codec_state->decode.slice_data));
+		memset(codec_state->decode.slice_data + codec_state->decode.max_slice_data, 0, NUM_SLICES * sizeof(*codec_state->decode.slice_data));
+		codec_state->decode.max_slice_data += NUM_SLICES;
+	    }
+	    reference_buffer_store(&codec_state->decode.slice_data[codec_state->decode.num_slice_data], obj_buffer->buffer_store);
+	    codec_state->decode.num_slice_data++;
+	    vaStatus = VA_STATUS_SUCCESS;
+            break;
+
+        case VAHuffmanTableBufferType:
+	    reference_buffer_store(&codec_state->decode.huffman_table, obj_buffer->buffer_store);
+	    vaStatus = VA_STATUS_SUCCESS;
+            break;
+
+        default:
+            vaStatus = VA_STATUS_ERROR_UNSUPPORTED_BUFFERTYPE;
+            break;
+	}
+
+	/* Release client side buffers (the data is our responsibility now, buffer_store) */
+	if (vaStatus == VA_STATUS_SUCCESS)
+	    epiphany_DestroyBuffer(ctx, buffers[i]);
     }
 
     return vaStatus;
@@ -1103,7 +1215,7 @@ VAStatus epiphany_EndPicture(
     obj_surface = SURFACE(obj_context->current_render_target);
     ASSERT(obj_surface);
 
-    // This is where we'd decode the picture, using the info stored in the buffers
+    // This is where we'd decode the picture, using the info stored in the codec_state
     obj_context->current_render_target = -1;
 
     return vaStatus;
@@ -1276,6 +1388,7 @@ VAStatus epiphany_Terminate( VADriverContextP ctx )
 {
     INIT_DRIVER_DATA
     object_buffer_p obj_buffer;
+    object_context_p obj_context;
     object_config_p obj_config;
     object_heap_iterator iter;
 
@@ -1284,25 +1397,30 @@ VAStatus epiphany_Terminate( VADriverContextP ctx )
     while (obj_buffer)
     {
         epiphany__information_message("vaTerminate: bufferID %08x still allocated, destroying\n", obj_buffer->base.id);
-        epiphany__destroy_buffer(driver_data, obj_buffer);
+        release_buffer_store(&obj_buffer->buffer_store);
         obj_buffer = (object_buffer_p) object_heap_next( &driver_data->buffer_heap, &iter);
     }
     object_heap_destroy( &driver_data->buffer_heap );
 
-    /* TODO cleanup */
     object_heap_destroy( &driver_data->surface_heap );
 
-    /* TODO cleanup */
+    obj_context = (object_context_p) object_heap_first( &driver_data->context_heap, &iter);
+    while (obj_context)
+    {
+        epiphany__information_message("vaTerminate: contextID %08x still allocated, destroying\n", obj_context->base.id);
+	epiphany_destroy_context(&driver_data->context_heap, (struct object_base *)obj_context);
+        obj_context = (object_context_p) object_heap_next( &driver_data->context_heap, &iter);
+    }
     object_heap_destroy( &driver_data->context_heap );
 
     /* Clean up configIDs */
     obj_config = (object_config_p) object_heap_first( &driver_data->config_heap, &iter);
     while (obj_config)
     {
-        object_heap_free( &driver_data->config_heap, (object_base_p) obj_config);
+        object_heap_free(&driver_data->config_heap, (object_base_p) obj_config);
         obj_config = (object_config_p) object_heap_next( &driver_data->config_heap, &iter);
     }
-    object_heap_destroy( &driver_data->config_heap );
+    object_heap_destroy(&driver_data->config_heap );
 
     free(ctx->pDriverData);
     ctx->pDriverData = NULL;
@@ -1389,7 +1507,7 @@ VAStatus VA_DRIVER_INIT_FUNC(  VADriverContextP ctx )
     ASSERT( result == 0 );
 
     driver_data->servIP = "127.0.0.1";
-    driver_data-laoderPort = 50999;
+    driver_data->loaderPort = 50999;
 
     return VA_STATUS_SUCCESS;
 }

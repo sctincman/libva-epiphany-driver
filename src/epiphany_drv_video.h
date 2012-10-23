@@ -62,29 +62,31 @@ struct buffer_store
     int num_elements;
 };
 
+#define NUM_SLICES     10
+
 struct decode_state
 {
     struct buffer_store *pic_param;
-    struct buffer_store **slice_params;
     struct buffer_store *iq_matrix;
+    struct buffer_store **slice_params;
     struct buffer_store *bit_plane;
     struct buffer_store *huffman_table;
-    struct buffer_store **slice_datas;
+    struct buffer_store **slice_data;
     VASurfaceID current_render_target;
     int max_slice_params;
-    int max_slice_datas;
     int num_slice_params;
-    int num_slice_datas;
+    int max_slice_data;
+    int num_slice_data;
 };
 
 struct encode_state
 {
-    struct buffer_store *seq_param;
     struct buffer_store *pic_param;
-    struct buffer_store *pic_control;
     struct buffer_store *iq_matrix;
-    struct buffer_store *q_matrix;
     struct buffer_store **slice_params;
+    struct buffer_store *seq_param;
+    struct buffer_store *pic_control;
+    struct buffer_store *q_matrix;
     VASurfaceID current_render_target;
     int max_slice_params;
     int num_slice_params;
@@ -116,6 +118,7 @@ struct object_context {
     int picture_height;
     int num_render_targets;
     int flags;
+    int codec_type;
     union codec_state codec_state;
     VASurfaceID *render_targets;
 };
@@ -132,10 +135,8 @@ struct object_surface {
     int orig_height;
     int flags;
     unsigned int fourcc;    
-    dri_bo *bo;
+    void *bo; //update as/if needed for epiphany
     VAImageID locked_image_id;
-    void (*free_private_data)(void **data);
-    void *private_data;
     unsigned int subsampling;
     int x_cb_offset;
     int y_cb_offset;
@@ -152,6 +153,7 @@ struct object_buffer {
     int max_num_elements;
     int num_elements;
     unsigned int element_size;
+    VABufferType type;
 };
 
 typedef struct object_config *object_config_p;
