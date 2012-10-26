@@ -1199,6 +1199,47 @@ VAStatus epiphany_RenderPicture(
     return vaStatus;
 }
 
+static void epiphnay_decode_picture(VADriverContextP ctx, 
+				    VAProfile profile,
+				    VAContextID contexID,
+				    union codec_state *codec_state)
+
+{
+    struct object_context *obj_context = CONTEXT(contextID);
+    struct decode_state *decode_state = &codec_state->decode;
+
+    assert(obj_context);
+
+    //gen7_mfd_context->wa_mpeg2_slice_vertical_position = -1;
+
+    switch (profile) {
+    case VAProfileMPEG2Simple:
+    case VAProfileMPEG2Main:
+        epiphnay_mpeg2_decode_picture(ctx, decode_state, gen7_mfd_context);
+        break;
+        
+    case VAProfileH264Baseline:
+    case VAProfileH264Main:
+    case VAProfileH264High:
+        epiphany_avc_decode_picture(ctx, decode_state, gen7_mfd_context);
+        break;
+
+    case VAProfileVC1Simple:
+    case VAProfileVC1Main:
+    case VAProfileVC1Advanced:
+        epiphnay_vc1_decode_picture(ctx, decode_state, gen7_mfd_context);
+        break;
+
+    case VAProfileJPEGBaseline:
+        epiphany_jpeg_decode_picture(ctx, decode_state, gen7_mfd_context);
+        break;
+
+    default:
+        assert(0);
+        break;
+    }
+}
+
 VAStatus epiphany_EndPicture(
 		VADriverContextP ctx,
 		VAContextID context
