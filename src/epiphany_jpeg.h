@@ -28,20 +28,24 @@
 #include <va/va_backend.h>
 #include <va/va_dec_jpeg.h>
 
-bool epiphany_output_dri_init(VADriverContextP ctx);
-
 VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx, struct decode_state *decode_state)
 
-VAStatus
-epiphany_put_surface_dri(
-    VADriverContextP    ctx,
-    VASurfaceID         surface,
-    void               *draw,
-    const VARectangle  *src_rect,
-    const VARectangle  *dst_rect,
-    const VARectangle  *cliprects,
-    unsigned int        num_cliprects,
-    unsigned int        flags
-);
+//we'll start with a naive binary tree for now
+struct binary_tree
+{
+    void *left;
+    void *right;
+    unsigned char value;
+};
 
-#endif /* EPIPHANY_OUTPUT_DRI_H */
+union word
+{
+    uint16_t word;
+    struct
+    {
+	char a;
+	char b;
+    } bytes;
+}
+
+#endif /* EPIPHANY_JPEG_H */

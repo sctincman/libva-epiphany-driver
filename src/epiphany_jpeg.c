@@ -56,11 +56,125 @@
 
 const float pi_8 = PI / 8.0;
 
-void epiphnay_jpeg_decode_entropy(VAHuffmanTableBufferJPEGBaseline *huffman_table,
-				  char *mcu_data_in,
-				  char *mcu_data_out)
+#define SIGMASK 0x8000
+#define LEFTZERO 0xFFFE
+
+#define NODE 255
+
+(struct binary_tree *) make_huffman_tree(unsigned char *num_codes,
+					 unsigned char *codes)
 {
-    
+    int i,j;
+    int k = 11;
+    int num_parents, num_children;
+    for(i=15; i>=0 && num_codes[i] == 0; i--);
+
+    struct binary_tree **children;
+    struct binary_tree **parents;
+
+    num_children = num_codes[i];
+    num_parents = (num_children + (num_children % 2))/2;
+
+    children = calloc(num_children + (num_children % 2), sizeof(struct binary_tree *));
+    if ( (num_children%2) == 1)
+	children[num_children] = NULL;
+
+    for(i=i-1; i>=0; i--)
+    {
+	for(j=0; j<num_children && k>=0; j++)
+	{
+	    children[j] = malloc(sizeof(struct binary_tree));
+
+	    children[j]->value = codes[k];
+	    children[j]->left = NULL;
+	    children[j]->right = NULL;
+	    k--;
+	}
+
+	parents = calloc(num_parents, sizeof(struct binary_tree));
+
+	for(j=0; j<num_parents; j++)
+	{
+	    parents[j]->left = children[2*j];
+	    parents[j]->right = children[2*j+1];
+	    parents[j]->value = NODE;
+	}
+
+	free(children);
+
+	num_children = num_codes[i];
+	children = calloc(num_parents+num_children, sizeof(struct binary_tree *));
+	for(j=0; j<num_parents; j++)
+	    children[j+num_children] = parents[j];
+
+	num_parents = (num_parents+num_children)/2;
+	
+    }
+
+    free(children);
+
+    return parents[0];
+}
+
+unsigned char walk_huffman(uint16_t sequence,
+			   struct binary_tree *huffman_tree,
+			   unsigned short int *counter)
+{
+    if(!huffman_tree->left && !huffman_tree->right)
+	return huffman_tree->value;
+    else
+    {
+	if((sequence & SIGMASK) == 0)
+	{
+	    *counter++;
+	    return walk_huffman( (sequence<<1) & LEFTZERO, huffman_tree->right);
+	}
+	else
+	{
+	    *counter++;
+	    return walk_huffman( (sequence<<1) & LEFTZERO, huffman_tree->left);
+	}
+    }
+}
+
+void free_huffman(struct binary_tree *huffman_tree)
+{
+    if(huffman_tree->left)
+	free_huffman(huffman_tree->left);
+    if(huffman_tree->right)
+	free_huffman(huffman_tree->right);
+    free(huffman_tree);
+}
+
+void epiphnay_jpeg_decode_entropy(char *mcu_data_in,
+				  char *mcu_data_out,
+				  struct binary_tree *huff_dc_tree,
+				  struct binary_tree *huff_ac_tree)
+{
+    int i,j = 0;
+    union word buffer;
+    uint16_t counter;
+    unsigned char code, done;
+
+    char *mcu_index = mcu_data_in;
+
+    //DC lookup
+    memcpy(&buffer.word, mcu_data_in, sizeof(uint16_t));
+    mcu_index += 2;
+    code = walk_huffman(&buffer.word, huffman_dc_tree, &counter);
+
+    if(counter > sizeof(char))
+    {
+	sequence = sequence << sizeof(char);
+	counter -= 8;
+	buffer->bytes.b = *mcu_index;
+	mcu_index++;
+    }
+
+    //here, align value and read
+
+    //AC lookups
+    //loop through a similar approach as above
 }
 
 // the resulting matrix needs to be an integer, and be cast accordingly
@@ -95,7 +209,7 @@ void epiphany_jpeg_decode_dct(unsigned char *out,
     {
 	for(x=0; x<BLKSZ; x++)
 	{
-	    sum = 0; //the last part is to add 128 to shift to unsigned, so why not just acc here first?
+	    sum = 0;
 	    for(v=0, v<BLKSZ, v++)
 	    {
 		for(u=0, u<BLKSZ, u++)
@@ -132,6 +246,12 @@ VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx,
     VAPictureParameterBufferJPEGBaseline *pic_params = (VAPictureParameterBufferJPEGBaseline *) decode_state->pic_param->buffer;
     VAHuffmanTableBufferJPEGBaseline *huffman_table = (VAHuffmanTableBufferJPEGBaseline *) decode_state->huffman_table->buffer;
 
+    struct binary_tree *huff_dc_lum, *huff_ac_lum, *huff_dc_chrom, *huff_ac_chrom;
+    huff_dc_lum = make_huffman_tree(&huffman_table->huffman_table[0]->num_dc_codes, &huffman_table->huffman_table[0]->dc_values);
+    huff_ac_lum = make_huffman_tree(&huffman_table->huffman_table[0]->num_ac_codes, &huffman_table->huffman_table[0]->ac_values);
+    huff_dc_chrom = make_huffman_tree(&huffman_table->huffman_table[1]->num_dc_codes, &huffman_table->huffman_table[1]->dc_values);
+    huff_ac_chrom = make_huffman_tree(&huffman_table->huffman_table[1]->num_ac_codes, &huffman_table->huffman_table[1]->ac_values);
+
     VASliceParameterBufferJPEGBaseline *slice_params;
 
     mcu_in = malloc(BLKSZ * BLKSZ * sizeof(char));
@@ -154,7 +274,12 @@ VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx,
 	{
 	    //read bytes until EOB, if next byte is 0x00, MCU follows, otherwise break
 	    slice_index = ( (char *) memccpy(mcu_in, slice_index, EOB, (slice_end - slice_index)));
-	    epiphany_jpeg_decode_entropy(huffman_table, mcu_in, mcu_out);
+
+	    //determine if using luminance or chrom tables
+	    if ((j%3))
+		epiphany_jpeg_decode_entropy(mcu_in, mcu_out, huff_dc_lum, huff_ac_lum);
+	    else
+		epiphany_jpeg_decode_entropy(mcu_in, mcu_out, huff_dc_chrom, huff_ac_chrom);
 
 	    if (slice_index[0] == PAD)
 		slice_index++;
@@ -207,4 +332,14 @@ VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx,
 	}
     }
 
+    //cleanup after ourselves
+    free(mcu_in);
+    free(mcu_out);
+    free(quant);
+    free(dcts);
+
+    free_huffman(huff_dc_lum);
+    free_huffman(huff_ac_lum);
+    free_huffman(huff_dc_chrom);
+    free_huffman(huff_ac_chrom);
 }
