@@ -27,8 +27,9 @@
 
 #include <va/va_backend.h>
 #include <va/va_dec_jpeg.h>
+#include <stdint.h>
 
-VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx, struct decode_state *decode_state)
+VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx, VAContextID context);
 
 //we'll start with a naive binary tree for now
 struct binary_tree
@@ -46,6 +47,6 @@ union word
 	char a;
 	char b;
     } bytes;
-}
+};
 
 #endif /* EPIPHANY_JPEG_H */

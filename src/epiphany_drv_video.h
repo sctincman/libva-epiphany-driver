@@ -38,7 +38,7 @@
 #define EPIPHANY_STR_VENDOR			"Epiphany Driver 0.1"
 
 //this was in the matmul_host example, need to reference docs why this offset is needed
-unsigned int DRAM_BASE = 0x81000000;
+#define DRAM_BASE 0x81000000
 
 struct epiphany_driver_data {
     struct object_heap	config_heap;
@@ -136,6 +136,8 @@ struct object_surface {
     int flags;
     unsigned int fourcc;    
     void *bo; //update as/if needed for epiphany
+    //Epiphany has no graphic output, so hold host side?
+    unsigned char *image;
     VAImageID locked_image_id;
     unsigned int subsampling;
     int x_cb_offset;

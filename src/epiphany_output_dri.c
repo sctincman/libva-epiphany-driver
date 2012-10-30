@@ -25,6 +25,7 @@
 
 #include "sysdeps.h"
 #include <va/va_dricommon.h>
+#include <va/va_drmcommon.h>
 #include "epiphany_drv_video.h"
 #include "epiphany_output_dri.h"
 
@@ -34,32 +35,41 @@
 
 #define INIT_DRIVER_DATA	struct epiphany_driver_data * const driver_data = (struct epiphany_driver_data *) ctx->pDriverData;
 
-VAStatus
-epiphany_put_surface_dri(
-    VADriverContextP    ctx,
-    VASurfaceID         surface,
-    void               *draw,
-    const VARectangle  *src_rect,
-    const VARectangle  *dst_rect,
-    const VARectangle  *cliprects,
-    unsigned int        num_cliprects,
-    unsigned int        flags
+#define CONFIG(id)  ((object_config_p) object_heap_lookup( &driver_data->config_heap, id ))
+#define CONTEXT(id) ((object_context_p) object_heap_lookup( &driver_data->context_heap, id ))
+#define SURFACE(id)	((object_surface_p) object_heap_lookup( &driver_data->surface_heap, id ))
+#define BUFFER(id)  ((object_buffer_p) object_heap_lookup( &driver_data->buffer_heap, id ))
+
+#define CONFIG_ID_OFFSET		0x01000000
+#define CONTEXT_ID_OFFSET		0x02000000
+#define SURFACE_ID_OFFSET		0x04000000
+#define BUFFER_ID_OFFSET		0x08000000
+
+VAStatus epiphany_put_surface_dri(VADriverContextP ctx,
+				      VASurfaceID surface,
+				      void               *draw,
+				      const VARectangle  *src_rect,
+				      const VARectangle  *dst_rect,
+				      const VARectangle  *cliprects,
+				      unsigned int        num_cliprects,
+				      unsigned int        flags
 )
 {
-    struct epiphany_driver_data * const epiphany = epiphany_driver_data(ctx); 
-    struct epiphany_render_state * const render_state = &driver_data->render_state;
+    INIT_DRIVER_DATA
+
+    struct dri_state *dri_state = (struct dri_state *) ctx->drm_state;
     struct dri_drawable *dri_drawable;
     union dri_buffer *buffer;
-    struct intel_region *dest_region;
     struct object_surface *obj_surface; 
-    unsigned int pp_flag = 0;
-    bool new_region = false;
-    uint32_t name;
-    int ret;
+
+    drmAddressPtr map = NULL;
 
     /* Currently don't support DRI1 */
-    if (!ctx->drm_state->base->auth_type, VA_DRM_AUTH_DRI2)
+    if (dri_state->base.auth_type != VA_DRM_AUTH_DRI2)
+    {
+        fprintf(stderr, "epiphany_output_dri error: Not DRI2");
         return VA_STATUS_ERROR_UNIMPLEMENTED;
+    }
 
     /* Some broken sources such as H.264 conformance case FM2_SVA_C
      * will get here
@@ -74,14 +84,16 @@ epiphany_put_surface_dri(
     buffer = dri_get_rendering_buffer(ctx, dri_drawable);
     assert(buffer);
 
-    intel_render_put_surface(ctx, surface, src_rect, dst_rect, flags);
-
-    if(obj_surface->subpic != VA_INVALID_ID) {
-        intel_render_put_subpicture(ctx, surface, src_rect, dst_rect);
+    //intel_render_put_surface(ctx, surface, src_rect, dst_rect, flags);
+    //ugh... I hope this is the right way to move the image data
+    if(drmMap(dri_state->base.fd, buffer->dri2.attachment, obj_surface->size, map))
+    {
+	memcpy(map, obj_surface->image, obj_surface->size);
     }
+    else
+	fprintf(stderr, "epiphany_output_dri error: Could not map drm buffer %d", buffer->dri2.attachment);
 
     dri_swap_buffer(ctx, dri_drawable);
-    dri_drawable->has_backbuffer = 0;
 
     return VA_STATUS_SUCCESS;
 }

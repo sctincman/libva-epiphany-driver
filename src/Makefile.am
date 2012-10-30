@@ -39,20 +39,29 @@ driver_ldflags = \
 	$(NULL)
 
 driver_libs = \
-	-lpthread -ldl		\
-	$(DRM_LIBS) 		\
+	-lpthread -ldl -lm	\
+	$(DRM_LIBS) -ldrm	\
 	$(LIBVA_DEPS_LIBS)	\
 	$(NULL)
 
 source_c = \
 	epiphany_drv_video.c	\
 	object_heap.c		\
+	epiphany_jpeg.c		\
+	epiphany_output_dri.c	\
 	$(NULL)
 
 source_h = \
 	epiphany_drv_video.h	\
 	object_heap.h		\
+	epiphany_jpeg.c		\
+	epiphany_output_dri.c	\
+	sysdeps.h
 	$(NULL)
+
+if USE_X11
+driver_libs			+= $(LIBVA_X11_DEPS_LIBS)
+endif
 
 epiphany_drv_video_la_LTLIBRARIES	= epiphany_drv_video.la
 epiphany_drv_video_ladir		= $(LIBVA_DRIVERS_PATH)
@@ -63,3 +72,6 @@ epiphany_drv_video_la_SOURCES	= $(source_c)
 noinst_HEADERS			= $(source_h)
 
 DIST_SUBDIRS = $(SUBDIRS)
+
+# Extra clean files so that maintainer-clean removes *everything*
+MAINTAINERCLEANFILES = Makefile.in config.h.in

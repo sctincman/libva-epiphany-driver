@@ -28,6 +28,8 @@
 #include "sysdeps.h"
 
 #include "epiphany_drv_video.h"
+#include "epiphany_jpeg.h"
+#include "epiphany_output_dri.h"
 
 #include "assert.h"
 #include <stdio.h>
@@ -471,6 +473,9 @@ VAStatus epiphany_CreateSurfaces(
         obj_surface->bo = NULL;
         obj_surface->locked_image_id = VA_INVALID_ID;
         obj_surface->subsampling = 0;
+
+	obj_surface->size = width*height*3;
+	obj_surface->image = calloc(width*height*3, sizeof(unsigned char));
     }
 
     /* Error recovery */
@@ -501,6 +506,8 @@ VAStatus epiphany_DestroySurfaces(
     {
         object_surface_p obj_surface = SURFACE(surface_list[i]);
         ASSERT(obj_surface);
+	if(obj_surface->image)
+	    free(obj_surface->image);
         object_heap_free( &driver_data->surface_heap, (object_base_p) obj_surface);
     }
     return VA_STATUS_SUCCESS;
@@ -1199,39 +1206,74 @@ VAStatus epiphany_RenderPicture(
     return vaStatus;
 }
 
-static void epiphnay_decode_picture(VADriverContextP ctx, 
+static void epiphany_decode_picture(VADriverContextP ctx, 
 				    VAProfile profile,
-				    VAContextID contexID,
-				    union codec_state *codec_state)
+				    VAContextID contextID)
 
 {
+    INIT_DRIVER_DATA
     struct object_context *obj_context = CONTEXT(contextID);
-    struct decode_state *decode_state = &codec_state->decode;
 
     assert(obj_context);
-
-    //gen7_mfd_context->wa_mpeg2_slice_vertical_position = -1;
 
     switch (profile) {
     case VAProfileMPEG2Simple:
     case VAProfileMPEG2Main:
-        epiphnay_mpeg2_decode_picture(ctx, decode_state, gen7_mfd_context);
+        //epiphnay_mpeg2_decode_picture(ctx, decode_state);
         break;
         
     case VAProfileH264Baseline:
     case VAProfileH264Main:
     case VAProfileH264High:
-        epiphany_avc_decode_picture(ctx, decode_state, gen7_mfd_context);
+        //epiphany_avc_decode_picture(ctx, decode_state);
         break;
 
     case VAProfileVC1Simple:
     case VAProfileVC1Main:
     case VAProfileVC1Advanced:
-        epiphnay_vc1_decode_picture(ctx, decode_state, gen7_mfd_context);
+        //epiphnay_vc1_decode_picture(ctx, decode_state);
         break;
 
     case VAProfileJPEGBaseline:
-        epiphany_jpeg_decode_picture(ctx, decode_state, gen7_mfd_context);
+        epiphany_jpeg_decode_picture(ctx, contextID);
+        break;
+
+    default:
+        assert(0);
+        break;
+    }
+}
+
+static void epiphany_encode_picture(VADriverContextP ctx, 
+				    VAProfile profile,
+				    VAContextID contextID)
+
+{
+    INIT_DRIVER_DATA
+    struct object_context *obj_context = CONTEXT(contextID);
+
+    assert(obj_context);
+
+    switch (profile) {
+    case VAProfileMPEG2Simple:
+    case VAProfileMPEG2Main:
+        //epiphnay_mpeg2_encode_picture(ctx, decode_state);
+        break;
+        
+    case VAProfileH264Baseline:
+    case VAProfileH264Main:
+    case VAProfileH264High:
+        //epiphany_avc_encode_picture(ctx, decode_state);
+        break;
+
+    case VAProfileVC1Simple:
+    case VAProfileVC1Main:
+    case VAProfileVC1Advanced:
+        //epiphnay_vc1_encode_picture(ctx, decode_state);
+        break;
+
+    case VAProfileJPEGBaseline:
+        //epiphany_jpeg_encode_picture(ctx, decode_state);
         break;
 
     default:
@@ -1242,21 +1284,22 @@ static void epiphnay_decode_picture(VADriverContextP ctx,
 
 VAStatus epiphany_EndPicture(
 		VADriverContextP ctx,
-		VAContextID context
-	)
+		VAContextID context)
 {
     INIT_DRIVER_DATA
     VAStatus vaStatus = VA_STATUS_SUCCESS;
-    object_context_p obj_context;
-    object_surface_p obj_surface;
-
-    obj_context = CONTEXT(context);
+    struct object_context *obj_context = CONTEXT(context);
     ASSERT(obj_context);
 
-    obj_surface = SURFACE(obj_context->current_render_target);
-    ASSERT(obj_surface);
+    struct object_config *obj_config = CONFIG(obj_context->config_id);
+    ASSERT(obj_config);
 
     // This is where we'd decode the picture, using the info stored in the codec_state
+    if(obj_context == CODEC_DEC)
+	epiphany_decode_picture(ctx, obj_config->profile, context);
+    else
+	epiphany_encode_picture(ctx, obj_config->profile, context);
+
     obj_context->current_render_target = -1;
 
     return vaStatus;
@@ -1313,10 +1356,10 @@ VAStatus epiphany_PutSurface(
 		unsigned int flags /* de-interlacing flags */
 	)
 {
-#ifdef HAVE_VA_X11
     if (IS_VA_X11(ctx)) {
         VARectangle src_rect, dst_rect;
 
+	epiphany__information_message("Trying to use DRI output");
 
         src_rect.x      = srcx;
         src_rect.y      = srcy;
@@ -1331,7 +1374,9 @@ VAStatus epiphany_PutSurface(
         return epiphany_put_surface_dri(ctx, surface, draw, &src_rect, &dst_rect,
                                     cliprects, number_cliprects, flags);
     }
-#endif
+    else
+	epiphany__error_message("No viable outputs...");
+
     return VA_STATUS_ERROR_UNIMPLEMENTED;
 }
 

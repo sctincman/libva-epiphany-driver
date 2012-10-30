@@ -17,6 +17,9 @@ m4_define([va_api_micro_version], [0])
 m4_define([va_api_version],
           [va_api_major_version.va_api_minor_version.va_api_micro_version])m4_define([va_api_major_version], [0])
 
+# libdrm minimum version requirement
+m4_define([libdrm_version], [2.4.23])
+
 # libva package version number, (as distinct from shared library version)
 # XXX: we want the package version to remain at 1.0.x for VA-API 0.32.y
 #
@@ -60,6 +63,16 @@ m4_ifdef([AM_SILENT_RULES], [AM_SILENT_RULES([yes])], [
     AC_SUBST(AM_DEFAULT_VERBOSITY)
 ])
 
+AC_ARG_ENABLE(drm,
+    [AC_HELP_STRING([--enable-drm],
+                    [build with VA/DRM API support @<:@default=yes@:>@])],
+    [], [enable_drm="yes"])
+
+AC_ARG_ENABLE(x11,
+    [AC_HELP_STRING([--enable-x11],
+                    [build with VA/X11 API support @<:@default=yes@:>@])],
+    [], [enable_x11="yes"])
+
 AC_DISABLE_STATIC
 AC_PROG_LIBTOOL
 AC_PROG_CC
@@ -72,8 +85,30 @@ AC_SYS_LARGEFILE
 LIBVA_VERSION=libva_version
 AC_SUBST(LIBVA_VERSION)
 
+dnl Check for recent enough DRM
+LIBDRM_VERSION=libdrm_version
+PKG_CHECK_MODULES([DRM], [libdrm >= $LIBDRM_VERSION])
+AC_SUBST(LIBDRM_VERSION)
+
 dnl Check for VA-API
 PKG_CHECK_MODULES(LIBVA_DEPS,     [libva >= va_api_version])
+
+dnl Check for VA/DRM API
+USE_DRM="$enable_drm"
+if test "$USE_DRM" = "yes"; then
+    PKG_CHECK_MODULES(LIBVA_DRM_DEPS, [libva-drm],
+      [AC_DEFINE([HAVE_VA_DRM], [1], [Defined to 1 if VA/DRM API is enabled])],
+      [USE_DRM="no"])
+
+    # Check for <drm_fourcc.h>
+    if test "$USE_DRM" = "yes"; then
+        saved_CPPFLAGS="$CPPFLAGS"
+        CPPFLAGS="$CPPFLAGS $DRM_CFLAGS"
+        AC_CHECK_HEADERS([drm_fourcc.h], [:], [USE_DRM="no"])
+        CPPFLAGS="$saved_CPPFLAGS"
+    fi
+fi
+AM_CONDITIONAL(USE_DRM, test "$USE_DRM" = "yes")
 
 VA_VERSION=`$PKG_CONFIG --modversion libva`
 VA_MAJOR_VERSION=`echo "$VA_VERSION" | cut -d'.' -f1`
@@ -88,6 +123,15 @@ va_full_version_int=`expr ${VA_MAJOR_VERSION:-0} "*" 1000000 + \
 VA_DRIVER_INIT_FUNC="__vaDriverInit_${VA_MAJOR_VERSION}_${VA_MINOR_VERSION}"
 AC_DEFINE_UNQUOTED([VA_DRIVER_INIT_FUNC], [$VA_DRIVER_INIT_FUNC],
     [Define driver entry-point])
+
+dnl Check for VA/DRM API
+USE_X11="$enable_x11"
+if test "$USE_X11" = "yes"; then
+    PKG_CHECK_MODULES(LIBVA_X11_DEPS, [libva-x11],
+      [AC_DEFINE([HAVE_VA_X11], [1], [Defined to 1 if VA/X11 API is enabled])],
+      [USE_X11="no"])
+fi
+AM_CONDITIONAL(USE_X11, test "$USE_X11" = "yes")
 
 dnl Check for VA-API drivers path
 AC_MSG_CHECKING([for VA drivers path])
@@ -127,10 +171,15 @@ AC_OUTPUT([
     src/Makefile
 ])
 
+dnl Print summary
+BACKENDS=""
+AS_IF([test "$USE_DRM" = "yes"], [BACKENDS="$BACKENDS drm"])
+AS_IF([test "$USE_X11" = "yes"], [BACKENDS="$BACKENDS x11"])
 
 echo
 echo $PACKAGE configuration summary:
 echo
 echo VA-API version ................... : $VA_VERSION_STR
 echo VA-API drivers path .............. : $LIBVA_DRIVERS_PATH
+echo Windowing systems ................ : $BACKENDS
 echo
