@@ -60,7 +60,7 @@ source_h = \
 	$(NULL)
 
 if USE_X11
-driver_libs			+= $(LIBVA_X11_DEPS_LIBS)
+driver_libs			+= $(LIBVA_X11_DEPS_LIBS) $(X11_LIBS)
 endif
 
 epiphany_drv_video_la_LTLIBRARIES	= epiphany_drv_video.la

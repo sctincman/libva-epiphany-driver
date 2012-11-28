@@ -130,6 +130,7 @@ if test "$USE_X11" = "yes"; then
     PKG_CHECK_MODULES(LIBVA_X11_DEPS, [libva-x11],
       [AC_DEFINE([HAVE_VA_X11], [1], [Defined to 1 if VA/X11 API is enabled])],
       [USE_X11="no"])
+    PKG_CHECK_MODULES([X11], [x11])
 fi
 AM_CONDITIONAL(USE_X11, test "$USE_X11" = "yes")
 

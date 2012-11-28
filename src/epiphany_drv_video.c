@@ -1295,7 +1295,7 @@ VAStatus epiphany_EndPicture(
     ASSERT(obj_config);
 
     // This is where we'd decode the picture, using the info stored in the codec_state
-    if(obj_context == CODEC_DEC)
+    if(obj_context->codec_type == CODEC_DEC)
 	epiphany_decode_picture(ctx, obj_config->profile, context);
     else
 	epiphany_encode_picture(ctx, obj_config->profile, context);
@@ -1359,7 +1359,7 @@ VAStatus epiphany_PutSurface(
     if (IS_VA_X11(ctx)) {
         VARectangle src_rect, dst_rect;
 
-	epiphany__information_message("Trying to use DRI output");
+	epiphany__information_message("Trying to use DRI output\n");
 
         src_rect.x      = srcx;
         src_rect.y      = srcy;
@@ -1375,7 +1375,7 @@ VAStatus epiphany_PutSurface(
                                     cliprects, number_cliprects, flags);
     }
     else
-	epiphany__error_message("No viable outputs...");
+	epiphany__error_message("No viable outputs...\n");
 
     return VA_STATUS_ERROR_UNIMPLEMENTED;
 }

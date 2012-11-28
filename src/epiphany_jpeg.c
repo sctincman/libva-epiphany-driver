@@ -48,8 +48,8 @@
 #define SURFACE_ID_OFFSET		0x04000000
 #define BUFFER_ID_OFFSET		0x08000000
 
-//JPEG EOB marker
-#define EOB 0xff
+//JPEG EOM marker
+#define EOM 0xff
 #define PAD 0x00
 
 //8 is the magic number!
@@ -67,31 +67,81 @@
 const float pi_8 = M_PI / 8.0;
 
 #define SIGMASK 0x8000
-#define LEFTZERO 0xFFFE
+#define RIGHTZERO 0xFFFE
 #define MSBMASK 0x40
 
 #define NODE 255
 
-struct binary_tree *make_huffman_tree(unsigned char *num_codes,
-				      unsigned char *codes)
+void printmat(char *matrix)
 {
     int i,j;
-    int k = 11;
+    for(i=0; i<BLKSZ; i++)
+    {
+	fprintf(stderr, "[ ");
+	for(j=0; j<BLKSZ; j++)
+	{
+	    fprintf(stderr, "%d\t", matrix[i*BLKSZ + j]);
+	}
+	fprintf(stderr, "]\n");
+    }
+}
+
+void ucprintmat(unsigned char *matrix)
+{
+    int i,j;
+    for(i=0; i<BLKSZ; i++)
+    {
+	fprintf(stderr, "[ ");
+	for(j=0; j<BLKSZ; j++)
+	{
+	    fprintf(stderr, "%d\t", matrix[i*BLKSZ + j]);
+	}
+	fprintf(stderr, "]\n");
+    }
+}
+
+void iprintmat(int *matrix)
+{
+    int i,j;
+    for(i=0; i<BLKSZ; i++)
+    {
+	fprintf(stderr, "[ ");
+	for(j=0; j<BLKSZ; j++)
+	{
+	    fprintf(stderr, "%d\t", matrix[i*BLKSZ + j]);
+	}
+	fprintf(stderr, "]\n");
+    }
+}
+
+struct binary_tree *make_huffman_tree(unsigned char *num_codes,
+				      unsigned char *codes,
+				      unsigned int max_codes)
+{
+    int i,j;
+    int k = 0;
     int num_parents, num_children;
     for(i=15; i>=0 && num_codes[i] == 0; i--);
 
     struct binary_tree **children;
-    struct binary_tree **parents = NULL;
+    struct binary_tree **parents;
+    struct binary_tree *root = NULL;
+
+    for(j=0; j<16; j++)
+	k+=num_codes[j];
 
     num_children = num_codes[i];
     num_parents = (num_children + (num_children % 2))/2;
 
-    children = calloc(num_children + (num_children % 2), sizeof(struct binary_tree *));
+    children = calloc(num_children + (num_children%2), sizeof(struct binary_tree *));
+    parents = calloc(num_parents, sizeof(struct binary_tree *));
+
     if ( (num_children%2) == 1)
 	children[num_children] = NULL;
 
     for(i=i-1; i>=0; i--)
     {
+
 	for(j=0; j<num_children && k>=0; j++)
 	{
 	    children[j] = malloc(sizeof(struct binary_tree));
@@ -100,34 +150,44 @@ struct binary_tree *make_huffman_tree(unsigned char *num_codes,
 	    children[j]->left = NULL;
 	    children[j]->right = NULL;
 	    k--;
-	}
 
-	parents = calloc(num_parents, sizeof(struct binary_tree));
+	}
 
 	for(j=0; j<num_parents; j++)
 	{
+	    parents[j] = malloc(sizeof(struct binary_tree));
+
 	    parents[j]->left = children[2*j];
 	    parents[j]->right = children[2*j+1];
 	    parents[j]->value = NODE;
+
 	}
 
-	free(children);
+	if(j!=0)
+	    root = parents[0];
 
 	num_children = num_codes[i];
-	children = calloc(num_parents+num_children, sizeof(struct binary_tree *));
+	if(children)
+	    free(children);
+	children = calloc(num_children+num_parents, sizeof(struct binary_tree *));
+
 	for(j=0; j<num_parents; j++)
 	    children[j+num_children] = parents[j];
 
 	num_parents = (num_parents+num_children)/2;
+	if(parents)
+	    free(parents);
+	parents = calloc(num_parents, sizeof(struct binary_tree *));
 	
     }
 
-    free(children);
 
+    if(children)
+	free(children);
     if(parents)
-	return parents[0];
-    else
-	return NULL;
+	free(parents);
+
+    return root;
 }
 
 unsigned char walk_huffman(uint16_t sequence, struct binary_tree *huffman_tree, unsigned short int *counter);
@@ -143,12 +203,12 @@ unsigned char walk_huffman(uint16_t sequence,
 	if((sequence & SIGMASK) == 0)
 	{
 	    (*counter)++;
-	    return walk_huffman( (sequence<<1) & LEFTZERO, huffman_tree->right, counter);
+	    return walk_huffman( (sequence<<1) & RIGHTZERO, huffman_tree->right, counter);
 	}
 	else
 	{
 	    (*counter)++;
-	    return walk_huffman( (sequence<<1) & LEFTZERO, huffman_tree->left, counter);
+	    return walk_huffman( (sequence<<1) & RIGHTZERO, huffman_tree->left, counter);
 	}
     }
 }
@@ -169,8 +229,12 @@ void free_huffman(struct binary_tree *huffman_tree)
  * (if the MSB is 0, then put an implied sign bit for a bitfield of size i+1.)
  * I'm sure there's a better way to do this, but as I'm not as confident in how C handles
  * signed shorts, sledge hammer it is!
+ *
+ * It seems the EOB is a huffman code, so now take the slice data in, and read until EOB. Returning
+ * the index_pointer to the next place in the stream
+ * Now, if there is a 0xFF byte (marker in header) the next byte must be skipped (only used in header)
  */
-void epiphany_jpeg_decode_entropy(char *mcu_data_in,
+char *epiphany_jpeg_decode_entropy(char *mcu_data_in,
 				  char *mcu_data_out,
 				  struct binary_tree *huff_dc_tree,
 				  struct binary_tree *huff_ac_tree)
@@ -187,15 +251,29 @@ void epiphany_jpeg_decode_entropy(char *mcu_data_in,
     //DC lookup
     memcpy(&buffer.word, mcu_data_in, sizeof(uint16_t));
     mcu_index += 2;
+    //test if bytes to be read are EOM (thus pad byte follows)
+    if(buffer.bytes.a == EOM)
+    {
+	buffer.bytes.b = mcu_index[0];
+	mcu_index ++;
+    }
+    if(buffer.bytes.b == EOM)
+    {
+	mcu_index++;
+    }
+
     code = walk_huffman(buffer.word, huff_dc_tree, &counter);
 
     //see if we need to read another byte
-    if(counter > sizeof(char))
+    if(counter >= sizeof(char))
     {
 	buffer.bytes.a = buffer.bytes.b;
 	counter -= 8;
 	buffer.bytes.b = *mcu_index;
 	mcu_index++;
+
+	if(buffer.bytes.b == EOM)
+	    mcu_index++;
     }
 
     //align to edge to check MSB
@@ -203,9 +281,10 @@ void epiphany_jpeg_decode_entropy(char *mcu_data_in,
     if (buffer.bytes.a & MSBMASK)
 	value = 0;
     else
-	value = -1 * pow(2, code);
+	value = -1 * pow(2, code-1);
 
     //move bit by bit adding the result to 'value', filling buffer as needed
+    //argh! zig zag!
     for(i=code-1; i>=0; i--)
     {
 	if(buffer.bytes.a & MSBMASK)
@@ -219,12 +298,12 @@ void epiphany_jpeg_decode_entropy(char *mcu_data_in,
 	    counter = 0;
 	}
     }
-
+    fprintf(stderr, "val %d ", value);
     mcu_data_out[0] = value;
 
     //AC lookups
-    //loop through a similar approach as above
-    for(j=1; j<BLKSZ*BLKSZ; j++)
+    //loop through a similar approach as above, reading a code for each block (until EOB)
+    for(j=1; j<BLKSZ*BLKSZ && code != 0x00; j++)
     {
 	//make sure we have a full buffer before sending this off
 	temp = buffer.bytes.a;
@@ -234,13 +313,16 @@ void epiphany_jpeg_decode_entropy(char *mcu_data_in,
 	buffer.bytes.a = temp;
 
 	code = walk_huffman(buffer.word, huff_ac_tree, &counter);
-
-	if(counter > sizeof(char))
+	fprintf(stderr, "huff(%d) ", code);
+	if(counter >= sizeof(char))
 	{
 	    buffer.bytes.a = buffer.bytes.b;
 	    counter -= 8;
 	    buffer.bytes.b = *mcu_index;
 	    mcu_index++;
+
+	    if(buffer.bytes.b == EOM)
+		mcu_index++;
 	}
 	
 	//align to edge to check MSB
@@ -248,7 +330,7 @@ void epiphany_jpeg_decode_entropy(char *mcu_data_in,
 	if (buffer.bytes.a & MSBMASK)
 	    value = 0;
 	else
-	    value = -1 * pow(2, code);
+	    value = -1 * pow(2, code-1);
 	
 	//move bit by bit, filling buffer as needed
 	for(i=code-1; i>=0; i--)
@@ -261,12 +343,21 @@ void epiphany_jpeg_decode_entropy(char *mcu_data_in,
 	    {
 		buffer.bytes.b = *mcu_index;
 		mcu_index++;
+		if(buffer.bytes.b == EOM)
+		    mcu_index++;
+
 		counter = 0;
 	    }
 	}
 	
 	mcu_data_out[j] = value;
     }
+    //memset the remaining slots to zero
+    fprintf(stderr, "j: %d", j);
+    if(j<BLKSZ*BLKSZ)
+	memset(mcu_data_out+j, 0x00, (BLKSZ*BLKSZ)-j);
+
+    return mcu_index;
 }
 
 // the resulting matrix needs to be an integer, and be cast accordingly
@@ -347,10 +438,11 @@ VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx,
 
     //recontruct all the huffman trees (simple binary tree implementation)
     struct binary_tree *huff_dc_lum, *huff_ac_lum, *huff_dc_chrom, *huff_ac_chrom;
-    huff_dc_lum = make_huffman_tree(huffman_table->huffman_table[0].num_dc_codes, huffman_table->huffman_table[0].dc_values);
-    huff_ac_lum = make_huffman_tree(huffman_table->huffman_table[0].num_ac_codes, huffman_table->huffman_table[0].ac_values);
-    huff_dc_chrom = make_huffman_tree(huffman_table->huffman_table[1].num_dc_codes, huffman_table->huffman_table[1].dc_values);
-    huff_ac_chrom = make_huffman_tree(huffman_table->huffman_table[1].num_ac_codes, huffman_table->huffman_table[1].ac_values);
+    fprintf(stderr, "epiphany_jpeg: make huffman trees\n");
+    huff_dc_lum = make_huffman_tree(huffman_table->huffman_table[0].num_dc_codes, huffman_table->huffman_table[0].dc_values, 12);
+    huff_ac_lum = make_huffman_tree(huffman_table->huffman_table[0].num_ac_codes, huffman_table->huffman_table[0].ac_values, 162);
+    huff_dc_chrom = make_huffman_tree(huffman_table->huffman_table[1].num_dc_codes, huffman_table->huffman_table[1].dc_values, 12);
+    huff_ac_chrom = make_huffman_tree(huffman_table->huffman_table[1].num_ac_codes, huffman_table->huffman_table[1].ac_values, 162);
 
     VASliceParameterBufferJPEGBaseline *slice_params;
 
@@ -360,12 +452,19 @@ VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx,
     quant = malloc(BLKSZ * BLKSZ * sizeof(int));
     dcts = malloc(BLKSZ * BLKSZ * sizeof(unsigned char));
 
+    //debuggin
+    memset(mcu_in, 0, BLKSZ*BLKSZ);
+
+    unsigned char* rgb = malloc(BLKSZ * BLKSZ * sizeof(unsigned char));
+
     //the final image buffer
     //unsigned char *image = malloc(pic_params->width * pics_params->height * 3 * sizeof(unsigned char));
     unsigned char *image = obj_surface->image;
 
     h_scale = pic_params->components[1].h_sampling_factor;
     v_scale = pic_params->components[1].v_sampling_factor;
+
+    fprintf(stderr, "epiphany_jpeg: begin MCU decode\n");
 
     //first, split each slice into separate MCUs, pass those to be huffman decompressed
     for (i=0; i < decode_state->num_slice_data; i++)
@@ -385,15 +484,42 @@ VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx,
 	    //determine subsampling, to determine how many lumincance to grab. grab those first
 	    for(k=0; k<(h_scale*v_scale); k++)
 	    {
+		/* grrr this part was not right
 		//read bytes until EOB, if next byte is 0x00, MCU follows, otherwise break
 		slice_index = ( (char *) memccpy(mcu_in, slice_index, EOB, (slice_end - slice_index)));
 		if (slice_index[0] == PAD)
 		    slice_index++;
+		*/
+		if(j==0)
+		{
+		    fprintf(stderr, "SLICE_INDEX\n");
+		    printmat(slice_index);
+		}
+		
 
-		epiphany_jpeg_decode_entropy(mcu_in, mcu_out, huff_dc_lum, huff_ac_lum);
+		slice_index = epiphany_jpeg_decode_entropy(slice_index, mcu_out, huff_dc_lum, huff_ac_lum);
+
+		if(j==0)
+		{
+		    fprintf(stderr, "MCU_OUT\n");
+		    printmat(mcu_out);
+		}
 
 		epiphany_jpeg_decode_quant(quant, mcu_out, iq->quantiser_table[pic_params->components[0].quantiser_table_selector], pic_params, slice_params);
+
+		if(j==0)
+		{
+		    fprintf(stderr, "QUANT\n");
+		    iprintmat(quant);
+		}
+
 		epiphany_jpeg_decode_dct(dcts, quant);
+
+		if(j==0)
+		{
+		    fprintf(stderr, "DCTS\n");
+		    ucprintmat(dcts);
+		}
 		
 		for(y=0; y<BLKSZ; y++)
 		{
@@ -404,16 +530,17 @@ VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx,
 		
 		}
 	    }
-
+	    fprintf(stderr, "finished lumincane (%d)\n", j);
 	    //perform for each component
 	    for(k=1; k<3; k++)
 	    {
+		/* same here...
 		//read bytes until EOB, if next byte is 0x00, MCU follows, otherwise break
 		slice_index = ( (char *) memccpy(mcu_in, slice_index, EOB, (slice_end - slice_index)));
 		if (slice_index[0] == PAD)
 		    slice_index++;
-
-		epiphany_jpeg_decode_entropy(mcu_in, mcu_out, huff_dc_chrom, huff_ac_chrom);
+		*/
+		slice_index = epiphany_jpeg_decode_entropy(slice_index, mcu_out, huff_dc_chrom, huff_ac_chrom);
 
 		epiphany_jpeg_decode_quant(quant, mcu_out, iq->quantiser_table[pic_params->components[k].quantiser_table_selector], pic_params, slice_params);
 		epiphany_jpeg_decode_dct(dcts, quant);
@@ -462,11 +589,12 @@ VAStatus epiphany_jpeg_decode_picture(VADriverContextP ctx,
     }
 
     //cleanup after ourselves
+    fprintf(stderr, "Freeing crap\n");    
     free(mcu_in);
     free(mcu_out);
     free(quant);
     free(dcts);
-
+    fprintf(stderr, "Freeing crap2\n");
     free_huffman(huff_dc_lum);
     free_huffman(huff_ac_lum);
     free_huffman(huff_dc_chrom);

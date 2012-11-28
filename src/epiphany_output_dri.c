@@ -26,8 +26,11 @@
 #include "sysdeps.h"
 #include <va/va_dricommon.h>
 #include <va/va_drmcommon.h>
+#include <va/va_dri2.h>
+
 #include "epiphany_drv_video.h"
 #include "epiphany_output_dri.h"
+#include <X11/Xlib.h>
 
 #include "assert.h"
 
@@ -46,13 +49,13 @@
 #define BUFFER_ID_OFFSET		0x08000000
 
 VAStatus epiphany_put_surface_dri(VADriverContextP ctx,
-				      VASurfaceID surface,
-				      void               *draw,
-				      const VARectangle  *src_rect,
-				      const VARectangle  *dst_rect,
-				      const VARectangle  *cliprects,
-				      unsigned int        num_cliprects,
-				      unsigned int        flags
+				  VASurfaceID surface,
+				  void               *draw,
+				  const VARectangle  *src_rect,
+				  const VARectangle  *dst_rect,
+				  const VARectangle  *cliprects,
+				  unsigned int        num_cliprects,
+				  unsigned int        flags
 )
 {
     INIT_DRIVER_DATA
@@ -62,14 +65,17 @@ VAStatus epiphany_put_surface_dri(VADriverContextP ctx,
     union dri_buffer *buffer;
     struct object_surface *obj_surface; 
 
-    drmAddressPtr map = NULL;
-
     /* Currently don't support DRI1 */
-    if (dri_state->base.auth_type != VA_DRM_AUTH_DRI2)
+    char *driver_name = NULL;
+    //there's a good chance this does not belong here (isDRI2Connected)
+    if (dri_state->base.auth_type != VA_DRM_AUTH_DRI2 && !isDRI2Connected(ctx, &driver_name))
     {
-        fprintf(stderr, "epiphany_output_dri error: Not DRI2");
+        fprintf(stderr, "epiphany_output_dri error: Not DRI2 (%s)\n", driver_name);
         return VA_STATUS_ERROR_UNIMPLEMENTED;
     }
+    fprintf(stderr, "epiphany_output_dri: auth_type %d\n", dri_state->base.auth_type);
+    fprintf(stderr, "epiphany_output_dri: fd %d\n", dri_state->base.fd);
+    fprintf(stderr, "epiphany_output_dri: driver %s\n", driver_name);
 
     /* Some broken sources such as H.264 conformance case FM2_SVA_C
      * will get here
@@ -78,20 +84,33 @@ VAStatus epiphany_put_surface_dri(VADriverContextP ctx,
     if (!obj_surface)
         return VA_STATUS_SUCCESS;
 
+    fprintf(stderr, "epiphany_output_dri: trying to do DRI stuff\n");
+
     dri_drawable = dri_get_drawable(ctx, (Drawable)draw);
     assert(dri_drawable);
+
+    fprintf(stderr, "epiphany_output_dri: trying to do DRI rendering stuff\n");
 
     buffer = dri_get_rendering_buffer(ctx, dri_drawable);
     assert(buffer);
 
-    //intel_render_put_surface(ctx, surface, src_rect, dst_rect, flags);
+    //create the Pixmap
+    //this is likely something that should be moved to CreateSurface, possibly? would need to be freed later
+
+    Pixmap source = XCreatePixmapFromBitmapData(ctx->native_dpy, dri_drawable->x_drawable,  (char *) obj_surface->image, obj_surface->width, obj_surface->height, 0, 0, 24);
+
+    fprintf(stderr, "epiphany_output_dri: Made Pixamp (%d)\n", source);
+    fwrite(obj_surface->image, sizeof(char), obj_surface->size, stdout);
+
     //ugh... I hope this is the right way to move the image data
-    if(drmMap(dri_state->base.fd, buffer->dri2.attachment, obj_surface->size, map))
+    /*if(drmMap(dri_state->base.fd, buffer->dri2.attachment, obj_surface->size, map))
     {
+	fprintf(stderr, "epiphany_output_dri: trying to copy drmMap");
 	memcpy(map, obj_surface->image, obj_surface->size);
     }
     else
 	fprintf(stderr, "epiphany_output_dri error: Could not map drm buffer %d", buffer->dri2.attachment);
+    */
 
     dri_swap_buffer(ctx, dri_drawable);
 
